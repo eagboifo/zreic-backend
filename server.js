@@ -1,9 +1,11 @@
+require('dotenv').config(); // ✅ Load .env variables 
 const express = require('express');
 const cors = require('cors');
 const mongoose = require('mongoose');
-require('dotenv').config(); // ✅ Load .env variables
-
 const app = express();
+
+console.log('🔍 MONGO_URI:', process.env.MONGO_URI);
+
 
 // ✅ Connect to MongoDB Atlas
 mongoose.connect(process.env.MONGO_URI, {
