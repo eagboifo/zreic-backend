@@ -1,11 +1,8 @@
-// server.js (production‑ready, hardened)
+// server.js (production‑ready)
 try { require('dotenv').config(); } catch (_) {}
 
 const express = require('express');
 const cors = require('cors');
-const helmet = require('helmet');
-const rateLimit = require('express-rate-limit');
-const bcrypt = require('bcrypt');
 const mongoose = require('mongoose');
 
 const app = express();
@@ -20,83 +17,47 @@ if (!RAW_URI) {
 }
 
 mongoose.set('strictQuery', true);
-mongoose
-  .connect(RAW_URI, { dbName: process.env.MONGO_DB_NAME || 'zreic_db' })
-  .then(() => console.log('✅ Connected to MongoDB Atlas'))
-  .catch(err => {
-    console.error('❌ Mongo error:', err?.message || err);
-    process.exit(1);
-  });
+mongoose.connect(RAW_URI, {
+  dbName: process.env.MONGO_DB_NAME || 'zreic_db',
+}).then(() => console.log('✅ Connected to MongoDB Atlas'))
+  .catch(err => { console.error('❌ Mongo error:', err?.message || err); process.exit(1); });
 
-// ----- CORS (env‑driven allow‑list) -----
-const envOrigins = (process.env.ALLOWED_ORIGINS || '')
-  .split(',')
-  .map(s => s.trim())
-  .filter(Boolean);
+// ----- CORS -----
+const ALLOWED_ORIGINS = [
+  'https://YOUR-FRONTEND-DOMAIN',  // ← replace with your Vercel origin
+  'http://localhost:5173',         // dev (optional)
+];
 
-const ALLOWED_ORIGINS = envOrigins.length
-  ? envOrigins
-  : [
-      // Defaults: replace with your real Vercel domain when known,
-      // or set ALLOWED_ORIGINS in the Render dashboard.
-      'https://YOUR-FRONTEND-DOMAIN', // e.g., https://zreic-frontend.vercel.app
-      'http://localhost:5173',
-    ];
-
-app.use(
-  cors({
-    origin(origin, cb) {
-      if (!origin) return cb(null, true); // allow curl/postman
-      return ALLOWED_ORIGINS.includes(origin)
-        ? cb(null, true)
-        : cb(new Error('Not allowed by CORS'));
-    },
-    credentials: false,
-  })
-);
-
-// ----- Security & basics -----
-app.use(helmet());
-app.use(express.json({ limit: '1mb' }));
-
-// Basic rate limit (adjust as needed)
-const limiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  max: 300,
-  standardHeaders: true,
-  legacyHeaders: false,
-});
-app.use(limiter);
-
-// Request logging
-app.use((req, _res, next) => {
-  console.log(`[${new Date().toISOString()}] ${req.method} ${req.url}`);
-  next();
-});
-
-// ----- User model -----
-const UserSchema = new mongoose.Schema(
-  {
-    fullName: { type: String, trim: true },
-    email: { type: String, unique: true, index: true, lowercase: true, trim: true },
-    password: { type: String }, // stored as bcrypt hash
+app.use(cors({
+  origin(origin, cb) {
+    if (!origin) return cb(null, true);                 // allow curl/postman
+    return ALLOWED_ORIGINS.includes(origin)
+      ? cb(null, true)
+      : cb(new Error('Not allowed by CORS'));
   },
-  { timestamps: true }
-);
+  credentials: false,
+}));
+
+// ----- Middleware -----
+app.use(express.json());
+app.use((req, _res, next) => { console.log(`[${new Date().toISOString()}] ${req.method} ${req.url}`); next(); });
+
+// ----- Minimal model (demo) -----
+const UserSchema = new mongoose.Schema({
+  fullName: String,
+  email: { type: String, unique: true, index: true },
+  password: String, // TODO: hash in production
+});
 const User = mongoose.model('User', UserSchema);
 
 // ----- Routes -----
 app.get('/', (_req, res) => {
-  res.json({
-    ok: true,
-    service: 'zreic-backend',
-    routes: ['GET /api/health', 'POST /api/register', 'POST /api/login'],
-    corsAllowed: ALLOWED_ORIGINS,
-  });
+  res.json({ ok: true, service: 'zreic-backend', routes: ['GET /api/health', 'POST /api/register', 'POST /api/login'] });
 });
 
 app.get('/api/health', (_req, res) => res.json({ ok: true }));
 
+// --- REGISTER (hash password before save) ---
 app.post('/api/register', async (req, res) => {
   try {
     let { fullName, email, password } = req.body || {};
@@ -108,21 +69,28 @@ app.post('/api/register', async (req, res) => {
     }
 
     email = String(email).toLowerCase().trim();
+
     const exists = await User.findOne({ email }).lean();
     if (exists) return res.status(409).json({ error: 'Email already registered' });
 
-    const hash = await bcrypt.hash(password, 12);
-    const newUser = await User.create({ fullName: String(fullName).trim(), email, password: hash });
+    const hash = await bcrypt.hash(String(password), 12);
+    const newUser = await User.create({
+      fullName: String(fullName).trim(),
+      email,
+      password: hash, // store hash, not plaintext
+    });
 
-    return res
-      .status(201)
-      .json({ message: 'User registered successfully', user: { id: newUser._id, fullName: newUser.fullName, email: newUser.email } });
+    return res.status(201).json({
+      message: 'User registered successfully',
+      user: { id: newUser._id, fullName: newUser.fullName, email: newUser.email },
+    });
   } catch (err) {
     console.error('Registration error:', err);
     return res.status(500).json({ error: 'User registration failed' });
   }
 });
 
+// --- LOGIN (compare hash; auto-upgrade plaintext on first login) ---
 app.post('/api/login', async (req, res) => {
   try {
     let { email, password } = req.body || {};
@@ -132,10 +100,34 @@ app.post('/api/login', async (req, res) => {
     const user = await User.findOne({ email });
     if (!user) return res.status(401).json({ error: 'Invalid email or password' });
 
-    const ok = await bcrypt.compare(String(password), user.password);
+    const stored = user.password || '';
+
+    // If stored password looks like bcrypt (starts with $2), compare as hash
+    const isBcrypt = stored.startsWith('$2');
+    let ok = false;
+
+    if (isBcrypt) {
+      ok = await bcrypt.compare(String(password), stored);
+    } else {
+      // Legacy plaintext user: compare plaintext, then upgrade-in-place
+      ok = stored === String(password);
+      if (ok) {
+        try {
+          user.password = await bcrypt.hash(String(password), 12);
+          await user.save();
+          console.log(`🔐 Upgraded plaintext password to bcrypt for ${email}`);
+        } catch (e) {
+          console.warn(`Password upgrade failed for ${email}:`, e?.message || e);
+        }
+      }
+    }
+
     if (!ok) return res.status(401).json({ error: 'Invalid email or password' });
 
-    return res.status(200).json({ message: 'Login successful', user: { id: user._id, email: user.email, fullName: user.fullName } });
+    return res.status(200).json({
+      message: 'Login successful',
+      user: { id: user._id, email: user.email, fullName: user.fullName },
+    });
   } catch (err) {
     console.error('Login error:', err);
     return res.status(500).json({ error: 'Login failed' });
