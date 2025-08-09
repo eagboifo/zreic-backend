@@ -23,20 +23,25 @@ mongoose.connect(RAW_URI, {
   .catch(err => { console.error('❌ Mongo error:', err?.message || err); process.exit(1); });
 
 // ----- CORS -----
+// ----- CORS -----
 const ALLOWED_ORIGINS = [
-  'https://YOUR-FRONTEND-DOMAIN',  // ← replace with your Vercel origin
-  'http://localhost:5173',         // dev (optional)
+  'http://localhost:5173', // Dev
 ];
 
 app.use(cors({
   origin(origin, cb) {
-    if (!origin) return cb(null, true);                 // allow curl/postman
-    return ALLOWED_ORIGINS.includes(origin)
-      ? cb(null, true)
-      : cb(new Error('Not allowed by CORS'));
+    if (!origin) return cb(null, true); // Allow curl/Postman with no origin
+
+    // Allow any *.vercel.app frontend
+    if (origin.endsWith('.vercel.app') || ALLOWED_ORIGINS.includes(origin)) {
+      return cb(null, true);
+    }
+
+    return cb(new Error(`Not allowed by CORS: ${origin}`));
   },
   credentials: false,
 }));
+
 
 // ----- Middleware -----
 app.use(express.json());
