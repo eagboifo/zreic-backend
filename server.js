@@ -19,6 +19,24 @@ function signToken(user) {
   );
 }
 
+// --- GET current logged-in user ---
+app.get('/api/me', requireAuth, async (req, res) => {
+  try {
+    const user = await User.findById(req.auth.sub).lean();
+    if (!user) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    const { _id, fullName, email, role, createdAt, updatedAt } = user;
+    res.json({ id: _id, fullName, email, role, createdAt, updatedAt });
+  } catch (err) {
+    console.error('Error fetching current user:', err);
+    res.status(500).json({ error: 'Failed to fetch user' });
+  }
+});
+
+
+
 // ----- Env & DB -----
 const RAW_URI = process.env.MONGO_URI || process.env.MONGODB_URI || null;
 const masked = RAW_URI ? RAW_URI.replace(/:\/\/([^:]+):([^@]+)@/, '://$1:****@') : RAW_URI;
