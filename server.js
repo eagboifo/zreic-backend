@@ -51,6 +51,66 @@ app.get('/api/me', requireAuth, async (req, res) => {
   }
 });
 
+// --- UPDATE PROFILE (fullName/email) ---
+app.put('/api/profile', requireAuth, async (req, res) => {
+  try {
+    let { fullName, email } = req.body || {};
+    if (!fullName && !email) {
+      return res.status(400).json({ error: 'Nothing to update' });
+    }
+
+    const updates = {};
+    if (fullName) updates.fullName = String(fullName).trim();
+
+    if (email) {
+      email = String(email).toLowerCase().trim();
+      // block duplicates
+      const exists = await User.findOne({ email, _id: { $ne: req.auth.sub } }).lean();
+      if (exists) return res.status(409).json({ error: 'Email already in use' });
+      updates.email = email;
+    }
+
+    const user = await User.findByIdAndUpdate(req.auth.sub, updates, { new: true }).lean();
+    if (!user) return res.status(404).json({ error: 'User not found' });
+
+    const { _id, role } = user;
+    return res.json({
+      message: 'Profile updated',
+      user: { id: _id, fullName: user.fullName, email: user.email, role }
+    });
+  } catch (err) {
+    console.error('Profile update error:', err);
+    return res.status(500).json({ error: 'Update failed' });
+  }
+});
+
+// --- CHANGE PASSWORD (verify old → set new hashed) ---
+app.put('/api/password', requireAuth, async (req, res) => {
+  try {
+    const { currentPassword, newPassword } = req.body || {};
+    if (!currentPassword || !newPassword) {
+      return res.status(400).json({ error: 'currentPassword and newPassword are required' });
+    }
+    if (String(newPassword).length < 6) {
+      return res.status(400).json({ error: 'New password must be at least 6 characters' });
+    }
+
+    const user = await User.findById(req.auth.sub);
+    if (!user) return res.status(404).json({ error: 'User not found' });
+
+    const ok = await bcrypt.compare(String(currentPassword), user.password);
+    if (!ok) return res.status(401).json({ error: 'Invalid current password' });
+
+    user.password = await bcrypt.hash(String(newPassword), 12);
+    await user.save();
+
+    return res.json({ message: 'Password updated' });
+  } catch (err) {
+    console.error('Password update error:', err);
+    return res.status(500).json({ error: 'Password update failed' });
+  }
+});
+
 
 // ----- Env & DB -----
 const RAW_URI = process.env.MONGO_URI || process.env.MONGODB_URI || null;
