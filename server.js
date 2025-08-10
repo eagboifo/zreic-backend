@@ -5,8 +5,19 @@ const express = require('express');
 const cors = require('cors');
 const mongoose = require('mongoose');
 const bcrypt = require('bcrypt');
+const jwt = require('jsonwebtoken');
+
 
 const app = express();
+
+// ✅ helper to sign JWT tokens
+function signToken(user) {
+  return jwt.sign(
+    { sub: String(user._id), role: user.role || 'user' },
+    process.env.JWT_SECRET,
+    { expiresIn: process.env.JWT_EXPIRES || '2h' }
+  );
+}
 
 // ----- Env & DB -----
 const RAW_URI = process.env.MONGO_URI || process.env.MONGODB_URI || null;
@@ -117,8 +128,11 @@ app.post('/api/login', async (req, res) => {
       return res.status(401).json({ error: 'Invalid email or password' });
     }
 
+    const token = signToken(user); // ✅ added
+
     return res.status(200).json({
       message: 'Login successful',
+      token, // ✅ added
       user: { id: user._id, fullName: user.fullName, email: user.email },
     });
   } catch (err) {
@@ -126,6 +140,7 @@ app.post('/api/login', async (req, res) => {
     return res.status(500).json({ error: 'Login failed' });
   }
 });
+
 
 
 // JSON 404
