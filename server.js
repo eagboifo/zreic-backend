@@ -10,6 +10,36 @@ const jwt = require('jsonwebtoken');
 
 const app = express();
 
+// --- CORS (added) ---
+const FRONTEND_ORIGINS = [
+  'http://localhost:5173',
+  'http://127.0.0.1:5173',
+  'https://zreic-portal-git-main-emmanuel-agboifos-projects.vercel.app',
+  'https://zreic-portal.vercel.app',
+];
+
+// help caches/CDNs vary by Origin
+app.use((req, res, next) => { res.setHeader('Vary', 'Origin'); next(); });
+
+app.use(
+  cors({
+    origin(origin, cb) {
+      // allow same-origin / non-browser tools (no Origin header)
+      if (!origin) return cb(null, true);
+      if (FRONTEND_ORIGINS.includes(origin) || /\.vercel\.app$/.test(origin)) return cb(null, true);
+      return cb(null, false);
+    },
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization'],
+    // credentials: false, // leave false unless you use cookies
+    maxAge: 600, // cache preflight 10 minutes
+  })
+);
+
+// ensure preflights succeed
+app.options('*', cors());
+
+
 // ✅ helper to sign JWT tokens
 function signToken(user) {
   return jwt.sign(
