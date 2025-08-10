@@ -4,6 +4,7 @@ try { require('dotenv').config(); } catch (_) {}
 const express = require('express');
 const cors = require('cors');
 const mongoose = require('mongoose');
+const bcrypt = require('bcrypt');
 
 const app = express();
 
@@ -95,49 +96,37 @@ app.post('/api/register', async (req, res) => {
   }
 });
 
-// --- LOGIN (compare hash; auto-upgrade plaintext on first login) ---
+
+// --- LOGIN (compare plaintext with stored hash) ---
 app.post('/api/login', async (req, res) => {
   try {
     let { email, password } = req.body || {};
-    if (!email || !password) return res.status(400).json({ error: 'email and password are required' });
-
-    email = String(email).toLowerCase().trim();
-    const user = await User.findOne({ email });
-    if (!user) return res.status(401).json({ error: 'Invalid email or password' });
-
-    const stored = user.password || '';
-
-    // If stored password looks like bcrypt (starts with $2), compare as hash
-    const isBcrypt = stored.startsWith('$2');
-    let ok = false;
-
-    if (isBcrypt) {
-      ok = await bcrypt.compare(String(password), stored);
-    } else {
-      // Legacy plaintext user: compare plaintext, then upgrade-in-place
-      ok = stored === String(password);
-      if (ok) {
-        try {
-          user.password = await bcrypt.hash(String(password), 12);
-          await user.save();
-          console.log(`🔐 Upgraded plaintext password to bcrypt for ${email}`);
-        } catch (e) {
-          console.warn(`Password upgrade failed for ${email}:`, e?.message || e);
-        }
-      }
+    if (!email || !password) {
+      return res.status(400).json({ error: 'email and password are required' });
     }
 
-    if (!ok) return res.status(401).json({ error: 'Invalid email or password' });
+    email = String(email).toLowerCase().trim();
+
+    const user = await User.findOne({ email });
+    if (!user) {
+      return res.status(401).json({ error: 'Invalid email or password' });
+    }
+
+    const ok = await bcrypt.compare(String(password), user.password);
+    if (!ok) {
+      return res.status(401).json({ error: 'Invalid email or password' });
+    }
 
     return res.status(200).json({
       message: 'Login successful',
-      user: { id: user._id, email: user.email, fullName: user.fullName },
+      user: { id: user._id, fullName: user.fullName, email: user.email },
     });
   } catch (err) {
     console.error('Login error:', err);
     return res.status(500).json({ error: 'Login failed' });
   }
 });
+
 
 // JSON 404
 app.use((req, res) => {
