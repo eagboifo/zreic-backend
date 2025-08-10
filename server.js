@@ -10,7 +10,7 @@ const jwt = require('jsonwebtoken');
 
 const app = express();
 
-// --- CORS (added) ---
+// --- CORS (works on Express 4/5) ---
 const FRONTEND_ORIGINS = [
   'http://localhost:5173',
   'http://127.0.0.1:5173',
@@ -18,23 +18,23 @@ const FRONTEND_ORIGINS = [
   'https://zreic-portal.vercel.app',
 ];
 
-// help caches/CDNs vary by Origin
+// Help caches/CDNs vary by Origin
 app.use((req, res, next) => { res.setHeader('Vary', 'Origin'); next(); });
 
-app.use(
-  cors({
-    origin(origin, cb) {
-      // allow same-origin / non-browser tools (no Origin header)
-      if (!origin) return cb(null, true);
-      if (FRONTEND_ORIGINS.includes(origin) || /\.vercel\.app$/.test(origin)) return cb(null, true);
-      return cb(null, false);
-    },
-    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization'],
-    // credentials: false, // leave false unless you use cookies
-    maxAge: 600, // cache preflight 10 minutes
-  })
-);
+app.use(cors({
+  origin(origin, cb) {
+    if (!origin) return cb(null, true); // curl/Postman/no Origin
+    if (FRONTEND_ORIGINS.includes(origin) || /\.vercel\.app$/.test(origin)) return cb(null, true);
+    return cb(null, false);
+  },
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
+  maxAge: 600,
+}));
+
+// OPTIONAL: only if you want to keep it
+// app.options('/*', cors()); // <- use this (not '*') or remove entirely
+
 
 // ensure preflights succeed
 app.options('*', cors());
